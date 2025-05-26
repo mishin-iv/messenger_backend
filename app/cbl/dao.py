@@ -18,7 +18,7 @@ class RequestsDAO:
                 except SQLAlchemyError as e:
                     await session.rollback()
                     raise e
-                return new_instance
+                return new_instance.id
 
     @classmethod
     async def return_all(cls):

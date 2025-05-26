@@ -8,8 +8,8 @@ cbl_router = APIRouter(prefix='/api', tags=['Requests database for CBL project']
 
 @cbl_router.post('/add')
 async def add_request(request: SRequest) -> dict:
-    await RequestsDAO.add_request(**request.model_dump())
-    return {'message': 'request added successfully', 'data': request.model_dump()}
+    request_id = await RequestsDAO.add_request(**request.model_dump())
+    return {'message': 'request added successfully', 'id': request_id, 'data': request.model_dump()}
 
 
 @cbl_router.get('/list')
