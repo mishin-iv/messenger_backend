@@ -25,3 +25,12 @@ async def remove_request(del_id: int) -> dict:
         return {'message': 'success', 'deleted_id': del_id}
     else:
         return {'message': 'request not found', 'deleted_id': None}
+
+@cbl_router.post('/take')
+async def take_request(req_id: int) -> dict:
+    check = await RequestsDAO.find_by_id(req_id)
+    if check:
+        await RequestsDAO.set_taken(req_id=req_id)
+        return {'message': 'success', 'taken_id': req_id}
+    else:
+        return {'message': 'request not found', 'taken_id': None}
