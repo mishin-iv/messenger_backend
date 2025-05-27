@@ -25,7 +25,6 @@ class RequestsDAO:
         async with async_session_maker() as session:
             query = select(cls.model).order_by(cls.model.taken, cls.model.priority.desc())
             result = await session.execute(query)
-            print(result.scalars())
             return result.scalars().all()
 
     @classmethod
