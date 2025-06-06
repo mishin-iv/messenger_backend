@@ -1,3 +1,4 @@
+import numpy as np
 from fastapi import APIRouter
 
 from app.cbl.dao import RequestsDAO
@@ -34,3 +35,15 @@ async def take_request(req_id: int) -> dict:
         return {'message': 'success', 'taken_id': req_id}
     else:
         return {'message': 'request not found', 'taken_id': None}
+
+
+@cbl_router.get('/danger')
+async def danger_request(x: int, y: int) -> dict:
+    danger_map = np.zeros((y * 5, x * 5), dtype=int)
+    for i in range(y * 5):
+        for j in range(x * 5):
+            if (2 * x) <= j < (3 * x) and (2 * y) <= i < (3 * y):
+                danger_map[i][j] = 2
+            elif x <= j < (4 * x) and y <= i < (4 * y):
+                danger_map[i][j] = 1
+    return {'message': 'success', 'map': danger_map.tolist()}
