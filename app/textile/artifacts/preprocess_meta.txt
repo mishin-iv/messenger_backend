@@ -1,0 +1,8 @@
+channels=2 (SNV, SG2D)
+patch_size=4
+mask_threshold=0.0
+patch_aggregation=mean
+sg_window_snv=9 sg_poly_snv=2
+sg_window_d2=15 sg_poly_d2=3 sg_deriv_d2=2
+wl_min=1411
+wl_max=2536
