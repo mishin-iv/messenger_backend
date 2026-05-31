@@ -16,9 +16,15 @@ spectrum. Stateless (nothing is stored).
   a `Label;953.04;958.65;…` header row + one data row (leading label cell ignored).
 
 Reflectance is expected on the **0–1** scale; a 0–100 % export is detected and
-rescaled. The spectrum **must span 1411–2536 nm** or the request is rejected
-**422**. For exact fidelity, upload the full Specim SWIR range (953–2548 nm);
-uploads are resampled onto that 288-band grid before filtering.
+rescaled. A **wavenumber (cm⁻¹) x-axis** (common on benchtop NIR instruments) is
+auto-detected and converted to nm (`nm = 1e7 / cm⁻¹`). The spectrum **must span
+1411–2536 nm** or the request is rejected **422**. For exact fidelity, upload the
+full Specim SWIR range (953–2548 nm); uploads are resampled onto that 288-band
+grid before filtering.
+
+> Note: cm⁻¹ auto-detection only fixes the axis *units* — it does not make an
+> out-of-domain spectrum (different instrument/scale, e.g. the NIST NIR set)
+> predict reliably.
 
 **Response** (all 10 fibres, sorted by percent desc):
 

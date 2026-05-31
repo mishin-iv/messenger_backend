@@ -16,7 +16,9 @@ Two CSV layouts are accepted (auto-detected):
             followed by one data row. An optional leading label cell is ignored.
 
 Reflectance is expected on the [0, 1] scale (as in training). Spectra exported
-on the 0-100 percent scale are detected and rescaled.
+on the 0-100 percent scale are detected and rescaled. A wavenumber (cm^-1)
+x-axis (common on benchtop NIR instruments) is auto-detected and converted to
+nm via nm = 1e7 / cm^-1.
 """
 
 from __future__ import annotations
@@ -33,6 +35,11 @@ SG_WINDOW_SNV, SG_POLY_SNV = 9, 2
 SG_WINDOW_D2, SG_POLY_D2, SG_DERIV_D2 = 15, 3, 2
 WL_MIN, WL_MAX = 1411.0, 2536.0          # crop window (nm)
 EXPECTED_BANDS = 203                      # bands after crop -> model input width
+
+# Axis-unit detection: valid SWIR wavelengths (nm) top out near 2547 nm, while
+# NIR wavenumber axes (cm^-1) covering this model's window run ~3950-12000. A
+# max above this threshold cleanly marks a wavenumber axis (2547 < 3000 < 3950).
+WAVENUMBER_NM_THRESHOLD = 3000.0
 
 _ARTIFACTS = Path(__file__).resolve().parent / "artifacts"
 # Canonical 288-band Specim grid the Savgol filters were tuned on. Uploads are
@@ -142,9 +149,23 @@ def _to_reflectance_fraction(refl: np.ndarray) -> np.ndarray:
     return refl
 
 
+def _to_wavelength_nm(wl: np.ndarray) -> np.ndarray:
+    """Convert a wavenumber (cm^-1) axis to wavelength (nm) when detected.
+
+    NIR instruments often report cm^-1; the model expects nm. They are
+    reciprocals: nm = 1e7 / cm^-1. Detection is by a max far above the SWIR
+    wavelength ceiling (see WAVENUMBER_NM_THRESHOLD).
+    """
+    if wl.size and float(np.nanmax(wl)) > WAVENUMBER_NM_THRESHOLD:
+        if np.any(wl <= 0):
+            raise SpectrumError("Wavenumber axis contains non-positive values.")
+        return 1e7 / wl
+    return wl
+
+
 def preprocess_spectrum(wl: np.ndarray, refl: np.ndarray) -> np.ndarray:
     """(wavelengths, reflectance) -> (1, 2, 203) float32 model input."""
-    wl = np.asarray(wl, float)
+    wl = _to_wavelength_nm(np.asarray(wl, float))
     refl = _to_reflectance_fraction(np.asarray(refl, float))
 
     # Sort by wavelength and drop duplicate grid points (np.interp needs both).
