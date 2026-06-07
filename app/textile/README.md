@@ -46,6 +46,30 @@ Note: Polyacrylic and Wool are absent from the training data, and Elastane /
 Carbon fibre / Polyurethane sit at the sensor detection floor — treat their
 values as unreliable. Cotton, Polyester and Lyocell are the strong predictions.
 
+`POST /api/textile/explain?baseline=mean|zeros` — same upload contract, but also
+returns **Integrated-Gradients** per-fibre saliency (which wavelengths drive each
+fibre). Reproduces `scripts/interpretability/intgrad_sample.py` without PyTorch:
+gradients are estimated by finite differences against `model_rawhead.onnx` (the
+model's raw head, before `relu_normalize`, so fibres stay independent). Heavier
+than `/predict` (~STEPS·407 forward passes; opt-in), validated at Pearson corr
+0.9993 vs exact torch-autograd IG. `baseline` defaults to `mean` (the mean real
+spectrum) — `zeros` is the SNV-zero null.
+
+**Response** adds, alongside `dominant` + `composition`:
+
+```json
+{
+  "wavelengths_nm": [1411.0, "…", 2536.0],
+  "spectrum":       ["…203 SNV values for a faint background trace…"],
+  "fibre_order":    ["Polyamide", "…", "Cotton"],
+  "importance":     {"Cotton": ["…203 values in 0..1…"], "…": []},
+  "baseline": "mean", "steps": 16
+}
+```
+
+Each `importance` curve is normalised to its own peak and aligned with
+`wavelengths_nm`.
+
 ## Artifacts (`artifacts/`)
 
 | File | Purpose |
@@ -54,9 +78,13 @@ values as unreliable. Cotton, Polyester and Lyocell are the strong predictions.
 | `fibre_order.txt` | the 10 output column names, in order |
 | `wavelengths_raw.npy` | canonical 288-band Specim grid uploads are resampled onto |
 | `preprocess_meta.txt` | Savgol/crop parameters (provenance; preprocessing.py hardcodes them) |
+| `model_rawhead.onnx` | raw head (pre-`relu_normalize`) for IG finite-diff gradients (`/explain`) |
+| `baseline_mean.npy` | `(1,2,203)` mean real spectrum — the IG `mean` baseline |
+| `wavelengths_cut.npy` | 203-band cropped nm axis — the `/explain` chart x-axis |
 
-Regenerate from the model repo with `scripts/export_onnx.py`, then copy these
-four files here.
+Regenerate from the model repo: `scripts/export_onnx.py` writes the first three
+data files; `scripts/export_intgrad_artifacts.py` writes `model_rawhead.onnx` +
+`baseline_mean.npy`. Copy all of the above here.
 
 ## Runtime dependencies (Raspberry Pi)
 
