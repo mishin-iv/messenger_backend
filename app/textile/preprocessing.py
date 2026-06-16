@@ -75,8 +75,13 @@ def _maybe_float(cell: str):
         return None
 
 
-def parse_spectrum_csv(text: str) -> tuple[np.ndarray, np.ndarray]:
-    """Extract (wavelengths, reflectance) from raw CSV text. Both 1-D, same len."""
+def parse_spectrum_csv(text: str) -> tuple[np.ndarray, np.ndarray, str | None]:
+    """Extract (wavelengths, y, y_axis) from raw CSV text.
+
+    ``wavelengths`` and ``y`` are 1-D and the same length. ``y_axis`` is the
+    instrument's declared ordinate unit (e.g. ``"absorbance"``) when the export
+    carries one, else ``None`` — see ``_detect_y_axis``.
+    """
     if not text or not text.strip():
         raise SpectrumError("Uploaded file is empty.")
 
@@ -92,18 +97,31 @@ def parse_spectrum_csv(text: str) -> tuple[np.ndarray, np.ndarray]:
     max_cols = max(len(r) for r in rows)
 
     if max_cols >= 4:
-        wl, refl = _parse_wide(rows)
+        wl, y, y_axis = _parse_wide(rows)
     else:
-        wl, refl = _parse_long(rows)
+        wl, y, y_axis = *_parse_long(rows), None
 
     if wl.size < 10:
         raise SpectrumError(
             f"Only {wl.size} spectral points parsed; need a full spectrum."
         )
-    return wl, refl
+    return wl, y, y_axis
 
 
-def _parse_wide(rows: list[list[str]]) -> tuple[np.ndarray, np.ndarray]:
+def _detect_y_axis(header: list[str], data: list[str]) -> str | None:
+    """Read the ordinate unit a device export declares (e.g. SYS-IR handhelds
+    write a ``y-Axis`` metadata column holding ``Absorbance``/``Reflectance``).
+
+    Returns the lower-cased label, or ``None`` when the layout carries no such
+    field (then reflectance is assumed, the training default).
+    """
+    for h, d in zip(header, data):
+        if h and h.strip().lower() in ("y-axis", "y axis") and d:
+            return d.strip().lower()
+    return None
+
+
+def _parse_wide(rows: list[list[str]]) -> tuple[np.ndarray, np.ndarray, str | None]:
     """Wide layout: wavelength header row + one data row (optional label cell)."""
     header = rows[0]
     data_rows = rows[1:]
@@ -113,18 +131,20 @@ def _parse_wide(rows: list[list[str]]) -> tuple[np.ndarray, np.ndarray]:
         )
     data = data_rows[0]
 
-    wl, refl = [], []
+    y_axis = _detect_y_axis(header, data)
+
+    wl, y = [], []
     for h, d in zip(header, data):
         w, r = _maybe_float(h), _maybe_float(d)
         if w is None or r is None:
             continue  # skip label/index cells (e.g. "Label" / sample name)
         wl.append(w)
-        refl.append(r)
+        y.append(r)
     if not wl:
         raise SpectrumError(
             "Could not read numeric wavelength/reflectance pairs from the CSV."
         )
-    return np.asarray(wl, float), np.asarray(refl, float)
+    return np.asarray(wl, float), np.asarray(y, float), y_axis
 
 
 def _parse_long(rows: list[list[str]]) -> tuple[np.ndarray, np.ndarray]:
@@ -162,6 +182,31 @@ def _to_reflectance_fraction(refl: np.ndarray) -> np.ndarray:
     return refl
 
 
+def _y_to_reflectance(y: np.ndarray, y_axis: str | None) -> np.ndarray:
+    """Convert a device's ordinate column to the [0, 1] reflectance the pipeline
+    expects, honouring the declared ``y-Axis`` unit.
+
+    The training pipeline takes reflectance and computes absorbance internally
+    (``A = log10(1/R)`` in ``_stack_channels``). An instrument that already
+    reports **absorbance** (SYS-IR handhelds do) must therefore be inverted back
+    to reflectance first (``R = 10**-A``); feeding its absorbance in as if it
+    were reflectance applies the log transform twice and corrupts the SNV /
+    2nd-derivative shapes the model keys on. ``None``/``reflectance`` keep the
+    historical reflectance assumption.
+    """
+    if y_axis in ("absorbance", "abs"):
+        return np.asarray(10.0 ** (-np.asarray(y, float)), float)
+    if y_axis in ("transmittance", "transmission", "%t", "t"):
+        t = _to_reflectance_fraction(np.asarray(y, float))   # T as a 0-1 fraction
+        return np.clip(t, 1e-6, 1.0)
+    if y_axis not in (None, "reflectance", "reflectance (%)", "%r", "r"):
+        raise SpectrumError(
+            f"Unsupported y-Axis unit '{y_axis}'; expected reflectance, "
+            "absorbance or transmittance."
+        )
+    return _to_reflectance_fraction(np.asarray(y, float))
+
+
 def _to_wavelength_nm(wl: np.ndarray) -> np.ndarray:
     """Convert a wavenumber (cm^-1) axis to wavelength (nm) when detected.
 
@@ -176,10 +221,17 @@ def _to_wavelength_nm(wl: np.ndarray) -> np.ndarray:
     return wl
 
 
-def preprocess_spectrum(wl: np.ndarray, refl: np.ndarray) -> np.ndarray:
-    """(wavelengths, reflectance) -> (1, 2, 203) float32 model input."""
+def preprocess_spectrum(
+    wl: np.ndarray, y: np.ndarray, y_axis: str | None = None
+) -> np.ndarray:
+    """(wavelengths, y, y_axis) -> (1, 2, 203) float32 model input.
+
+    ``y_axis`` is the instrument's ordinate unit; absorbance/transmittance are
+    converted to reflectance first (see ``_y_to_reflectance``). Defaults to
+    reflectance when unknown.
+    """
     wl = _to_wavelength_nm(np.asarray(wl, float))
-    refl = _to_reflectance_fraction(np.asarray(refl, float))
+    refl = _y_to_reflectance(np.asarray(y, float), y_axis)
 
     # Sort by wavelength and drop duplicate grid points (np.interp needs both).
     order = np.argsort(wl)
@@ -244,5 +296,5 @@ def preprocess_csv_bytes(raw: bytes) -> np.ndarray:
             text = raw.decode("latin-1")
         except UnicodeDecodeError as exc:
             raise SpectrumError("File is not valid text/CSV.") from exc
-    wl, refl = parse_spectrum_csv(text)
-    return preprocess_spectrum(wl, refl)
+    wl, y, y_axis = parse_spectrum_csv(text)
+    return preprocess_spectrum(wl, y, y_axis)
