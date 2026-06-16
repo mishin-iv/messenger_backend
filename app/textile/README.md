@@ -17,8 +17,14 @@ spectrum. Stateless (nothing is stored).
 
 Reflectance is expected on the **0–1** scale; a 0–100 % export is detected and
 rescaled. A **wavenumber (cm⁻¹) x-axis** (common on benchtop NIR instruments) is
-auto-detected and converted to nm (`nm = 1e7 / cm⁻¹`). The spectrum **must span
-1411–2536 nm** or the request is rejected **422**. For exact fidelity, upload the
+auto-detected and converted to nm (`nm = 1e7 / cm⁻¹`). The model's window is
+**1411–2536 nm**, but an instrument that stops short of it is still accepted as
+long as each side falls short by no more than **200 nm** (`EXTRAP_MARGIN_NM`):
+the uncovered bands are **hold-extrapolated** (the boundary value is clamped
+outward, the same edge fill the synthesis pipeline uses). A handheld NIR capped
+at **1300–2350 nm** works this way — the 2350–2536 nm tail is extrapolated; on
+the project's `sample_19-1` this moves the prediction by only ~1.5 pp. Spectra
+too short for that margin are rejected **422**. For exact fidelity, upload the
 full Specim SWIR range (953–2548 nm); uploads are resampled onto that 288-band
 grid before filtering.
 

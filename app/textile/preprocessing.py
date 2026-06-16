@@ -19,6 +19,10 @@ Reflectance is expected on the [0, 1] scale (as in training). Spectra exported
 on the 0-100 percent scale are detected and rescaled. A wavenumber (cm^-1)
 x-axis (common on benchtop NIR instruments) is auto-detected and converted to
 nm via nm = 1e7 / cm^-1.
+
+The model's crop window is 1411-2536 nm, but an instrument that stops short of
+it (e.g. a handheld NIR capped at 1300-2350 nm) is still accepted: bands it
+doesn't reach are hold-extrapolated, up to EXTRAP_MARGIN_NM per side.
 """
 
 from __future__ import annotations
@@ -35,6 +39,15 @@ SG_WINDOW_SNV, SG_POLY_SNV = 9, 2
 SG_WINDOW_D2, SG_POLY_D2, SG_DERIV_D2 = 15, 3, 2
 WL_MIN, WL_MAX = 1411.0, 2536.0          # crop window (nm)
 EXPECTED_BANDS = 203                      # bands after crop -> model input width
+
+# Range tolerance: a handheld NIR may not span the full window (e.g. one capped
+# at 1300-2350 nm misses the 2350-2536 nm tail). Bands the instrument doesn't
+# reach are hold-extrapolated — the boundary value is clamped outward, the same
+# constant-hold edge fill the synthesis pipeline uses for NIST refs that fall
+# short of the Specim grid (synthesize_blends.load_refs). Allowed only up to this
+# margin per side; beyond it the model has no real signal and the upload is
+# rejected. 200 nm covers the 186 nm gap of a 1300-2350 nm instrument.
+EXTRAP_MARGIN_NM = 200.0
 
 # Axis-unit detection: valid SWIR wavelengths (nm) top out near 2547 nm, while
 # NIR wavenumber axes (cm^-1) covering this model's window run ~3950-12000. A
@@ -177,14 +190,23 @@ def preprocess_spectrum(wl: np.ndarray, refl: np.ndarray) -> np.ndarray:
     if not np.all(np.isfinite(refl)):
         raise SpectrumError("Reflectance column contains non-finite values.")
 
-    # Hard gate: the spectrum must span the model's crop window.
-    if wl.min() > WL_MIN or wl.max() < WL_MAX:
+    # Coverage gate: the model wants WL_MIN..WL_MAX, but an instrument that stops
+    # short is allowed as long as each side falls short by no more than
+    # EXTRAP_MARGIN_NM — the uncovered bands are hold-extrapolated below. Beyond
+    # that margin there's too little real signal, so reject.
+    missing_low = max(0.0, wl.min() - WL_MIN)    # crop nm missing at the bottom
+    missing_high = max(0.0, WL_MAX - wl.max())   # crop nm missing at the top
+    if missing_low > EXTRAP_MARGIN_NM or missing_high > EXTRAP_MARGIN_NM:
         raise SpectrumError(
             f"Spectrum covers {wl.min():.0f}-{wl.max():.0f} nm but the model needs "
-            f"{WL_MIN:.0f}-{WL_MAX:.0f} nm. Upload a SWIR spectrum spanning that range."
+            f"{WL_MIN:.0f}-{WL_MAX:.0f} nm (only {EXTRAP_MARGIN_NM:.0f} nm per side "
+            f"can be extrapolated). Upload a wider SWIR spectrum."
         )
 
-    # Resample onto the canonical Specim grid the filters were tuned on.
+    # Resample onto the canonical Specim grid the filters were tuned on. np.interp
+    # clamps to the boundary value outside [wl.min, wl.max], so bands the
+    # instrument never reached are filled by constant-hold extrapolation — the
+    # same edge fill the synthesis pipeline uses (synthesize_blends.load_refs).
     refl_canon = np.interp(WL_RAW, wl, refl).reshape(1, -1)
 
     x = _stack_channels(refl_canon, WL_RAW)
